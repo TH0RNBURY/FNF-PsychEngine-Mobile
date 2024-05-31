@@ -1,8 +1,10 @@
 package states;
 
 import backend.WeekData;
+import backend.Highscore;
 
 import flixel.input.keyboard.FlxKey;
+import flixel.addons.transition.FlxTransitionableState;
 import flixel.graphics.frames.FlxAtlasFrames;
 import flixel.graphics.frames.FlxFrame;
 import flixel.group.FlxGroup;
@@ -41,6 +43,8 @@ class TitleState extends MusicBeatState
 	public static var volumeUpKeys:Array<FlxKey> = [FlxKey.NUMPADPLUS, FlxKey.PLUS];
 
 	public static var initialized:Bool = false;
+	
+	public static var ignoreCopy:Bool = false;
 
 	var blackScreen:FlxSprite;
 	var credGroup:FlxGroup;
@@ -57,7 +61,7 @@ class TitleState extends MusicBeatState
 
 	#if TITLE_SCREEN_EASTER_EGG
 	var easterEggKeys:Array<String> = [
-		'SHADOW', 'RIVEREN', 'BBPANZU'
+		'SHADOW', 'RIVER', 'BBPANZU'
 	];
 	var allowedKeys:String = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 	var easterEggKeysBuffer:String = '';
@@ -73,22 +77,41 @@ class TitleState extends MusicBeatState
 	{
 		Paths.clearStoredMemory();
 
-		#if MODS_ALLOWED
-		Mods.pushGlobalMods();
-		Mods.loadTopMod();
+		#if android
+		FlxG.android.preventDefaultKeys = [BACK];
 		#end
 
+		#if LUA_ALLOWED
+        	#if (android && EXTERNAL || MEDIA)
+        try {
+        	#end
+		Mods.pushGlobalMods();
+            #if (android && EXTERNAL || MEDIA)
+        } catch (e:Dynamic) {
+            SUtil.showPopUp("Please create folder to\n" + #if EXTERNAL "/storage/emulated/0/." + lime.app.Application.current.meta.get('file') #else "/storage/emulated/0/Android/media/" + lime.app.Application.current.meta.get('packageName') #end + "\nPress OK to close the game", "Error!");
+            Sys.exit(1);
+        }
+            #end
+		#end
+
+		#if mobile
+		if(!CopyState.checkExistingFiles() && !ignoreCopy)
+			FlxG.switchState(new CopyState());
+		#end
+
+		Mods.loadTopMod();
+
+		FlxG.fixedTimestep = false;
+		FlxG.game.focusLostFramerate = 60;
+		FlxG.keys.preventDefaultKeys = [TAB];
+
 		curWacky = FlxG.random.getObject(getIntroTextShit());
 
 		super.create();
 
+		FlxG.save.bind('funkin', CoolUtil.getSavePath());
 
 		ClientPrefs.loadPrefs();
-		Language.reloadPhrases();
-
-		super.create();
-		
-		curWacky = FlxG.random.getObject(getIntroTextShit());
 
 		#if CHECK_FOR_UPDATES
 		if(ClientPrefs.data.checkForUpdates && !closedState) {
@@ -110,10 +133,11 @@ class TitleState extends MusicBeatState
 				trace('error: $error');
 			}
 
-			try {http.request();} catch(e:Dynamic) {trace('http error: $e');}
+			http.request();
 		}
 		#end
 
+		Highscore.load();
 
 		// IGNORE THIS!!!
 		titleJSON = tjson.TJSON.parse(Paths.getTextFromFile('images/gfDanceTitle.json'));
@@ -125,7 +149,7 @@ class TitleState extends MusicBeatState
 			case 'SHADOW':
 				titleJSON.gfx += 210;
 				titleJSON.gfy += 40;
-			case 'RIVEREN':
+			case 'RIVER':
 				titleJSON.gfx += 180;
 				titleJSON.gfy += 40;
 			case 'BBPANZU':
@@ -143,7 +167,6 @@ class TitleState extends MusicBeatState
 			}
 			persistentUpdate = true;
 			persistentDraw = true;
-			MobileData.init();
 		}
 
 		if (FlxG.save.data.weekCompleted != null)
@@ -157,7 +180,7 @@ class TitleState extends MusicBeatState
 		#elseif CHARTING
 		MusicBeatState.switchState(new ChartingState());
 		#else
-		if(FlxG.save.data.flashing == null && !FlashingState.leftState) {
+		if(#if mobile CopyState.checkExistingFiles() && #end FlxG.save.data.flashing == null && !FlashingState.leftState) {
 			controls.isInSubstate = false; //idfk what's wrong
 			FlxTransitionableState.skipNextTransIn = true;
 			FlxTransitionableState.skipNextTransOut = true;
@@ -184,8 +207,12 @@ class TitleState extends MusicBeatState
 
 	function startIntro()
 	{
-		if (!initialized && FlxG.sound.music == null)
-			FlxG.sound.playMusic(Paths.music('freakyMenu'), 0);
+		if (!initialized)
+		{
+			if(FlxG.sound.music == null) {
+				FlxG.sound.playMusic(Paths.music('freakyMenu'), 0);
+			}
+		}
 
 		Conductor.bpm = titleJSON.bpm;
 		persistentUpdate = true;
@@ -228,7 +255,7 @@ class TitleState extends MusicBeatState
 				gfDance.frames = Paths.getSparrowAtlas('ShadowBump');
 				gfDance.animation.addByPrefix('danceLeft', 'Shadow Title Bump', 24);
 				gfDance.animation.addByPrefix('danceRight', 'Shadow Title Bump', 24);
-			case 'RIVEREN':
+			case 'RIVER':
 				gfDance.frames = Paths.getSparrowAtlas('RiverBump');
 				gfDance.animation.addByIndices('danceLeft', 'River Title Bump', [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], "", 24, false);
 				gfDance.animation.addByIndices('danceRight', 'River Title Bump', [29, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], "", 24, false);
@@ -323,7 +350,7 @@ class TitleState extends MusicBeatState
 	function getIntroTextShit():Array<Array<String>>
 	{
 		#if MODS_ALLOWED
-		var firstArray:Array<String> = Mods.mergeAllTextsNamed('data/introText.txt');
+		var firstArray:Array<String> = Mods.mergeAllTextsNamed('data/introText.txt', Paths.getSharedPath());
 		#else
 		var fullText:String = Assets.getText(Paths.txt('introText'));
 		var firstArray:Array<String> = fullText.split('\n');
@@ -442,7 +469,7 @@ class TitleState extends MusicBeatState
 								FlxG.save.data.psychDevsEasterEgg = word;
 							FlxG.save.flush();
 
-							FlxG.sound.play(Paths.sound('secret'));
+							FlxG.sound.play(Paths.sound('ToggleJingle'));
 
 							var black:FlxSprite = new FlxSprite(0, 0).makeGraphic(FlxG.width, FlxG.height, FlxColor.BLACK);
 							black.alpha = 0;
@@ -546,16 +573,28 @@ class TitleState extends MusicBeatState
 					FlxG.sound.playMusic(Paths.music('freakyMenu'), 0);
 					FlxG.sound.music.fadeIn(4, 0, 0.7);
 				case 2:
+					#if PSYCH_WATERMARKS
 					createCoolText(['Psych Engine by'], 40);
+					#else
+					createCoolText(['ninjamuffin99', 'phantomArcade', 'kawaisprite', 'evilsk8er']);
+					#end
 				case 4:
+					#if PSYCH_WATERMARKS
 					addMoreText('Shadow Mario', 40);
 					addMoreText('Riveren', 40);
+					#else
+					addMoreText('present');
+					#end
 				case 5:
 					deleteCoolText();
 				case 6:
-					createCoolText(['Not associated', 'with'], -40);
+					#if PSYCH_WATERMARKS
+					createCoolText(['A cool mobile port', 'for'], -40);
+					#else
+					createCoolText(['A cool mobile port', 'for'], -40);
+					#end
 				case 8:
-					addMoreText('newgrounds', -40);
+					addMoreText('Psych Engine', -40);
 					ngSpr.visible = true;
 				case 9:
 					deleteCoolText();
@@ -567,11 +606,11 @@ class TitleState extends MusicBeatState
 				case 13:
 					deleteCoolText();
 				case 14:
-					addMoreText('Friday');
+					addMoreText('Psych');
 				case 15:
-					addMoreText('Night');
+					addMoreText('Engine');
 				case 16:
-					addMoreText('Funkin'); // credTextShit.text += '\nFunkin';
+					addMoreText('Android Port'); // credTextShit.text += '\nFunkin';
 
 				case 17:
 					skipIntro();
@@ -585,7 +624,6 @@ class TitleState extends MusicBeatState
 	{
 		if (!skippedIntro)
 		{
-			#if TITLE_SCREEN_EASTER_EGG
 			if (playJingle) //Ignore deez
 			{
 				var easteregg:String = FlxG.save.data.psychDevsEasterEgg;
@@ -595,7 +633,7 @@ class TitleState extends MusicBeatState
 				var sound:FlxSound = null;
 				switch(easteregg)
 				{
-					case 'RIVEREN':
+					case 'RIVER':
 						sound = FlxG.sound.play(Paths.sound('JingleRiver'));
 					case 'SHADOW':
 						FlxG.sound.play(Paths.sound('JingleShadow'));
@@ -638,7 +676,7 @@ class TitleState extends MusicBeatState
 				}
 				playJingle = false;
 			}
-			else #end //Default! Edit this one!!
+			else //Default! Edit this one!!
 			{
 				remove(ngSpr);
 				remove(credGroup);
